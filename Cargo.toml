@@ -1,0 +1,18 @@
+[package]
+name = "ld38"
+version = "0.1.0"
+authors = ["Marthog <Marthog@users.noreply.github.com>"]
+license = "gpl-3"
+
+[dependencies]
+itertools = "0.6"
+either = "1"
+rand = "0.3"
+log = "0.3"
+lazy_static = "0.2"
+assert = "0.7"
+csv = "0.15"
+
+[dev-dependencies]
+quickcheck = "0.4"
+
