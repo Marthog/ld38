@@ -1,0 +1,6 @@
+Tiles:
+    - provide resources
+
+Cards:
+    Provide effects, e.g. harvest resources, expand production, laws.
+    Events: like cards, but happen automatically

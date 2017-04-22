@@ -1,0 +1,2 @@
+#!/bin/sh
+cargo watch -c -s '(cargo check --color always 2> /dev/stdout && cargo test --color always 2> /dev/stdout) | head -n 60'
