@@ -113,14 +113,17 @@ impl Map {
         let mut group = Vec::new();
         self.each(|x,y,tile| {
             let tile_size = 100.0;
-            let bg = Click(y*self.width+x, Box::new(Color(tile.color(), 
-                                   Box::new(Rectangle(tile_size,tile_size)))));
+            let bg = Rectangle(tile_size,tile_size)
+                .color(tile.color())
+                .click(y*self.width+x);
 
-            let txt = Translate([10.0, 10.0], Box::new(Text(12, tile.text().to_string())));
+            let txt = Text(12, tile.text().to_string())
+                .translate([10.0, 10.0]);
 
-            let r = Box::new(Group(vec![bg,txt]));
+            let r = Group(vec![bg,txt])
+                .translate([x as f64*tile_size,y as f64*tile_size]);
 
-            group.push(Translate([x as f64*tile_size,y as f64*tile_size],r));
+            group.push(r);
         });
         Group(group)
     }
@@ -192,13 +195,7 @@ pub fn inside(rect: [f64;4], p: Vec2d) -> bool {
     p[0]>=0.0 && p[1]>=0.0 && p[0]<=rect[2] && p[1]<=rect[3]
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Hover {
-    Tile(u32,u32),
-    Field(u32),
-    Nothing,
-}
-
+#[derive(Clone,Debug)]
 pub enum Graphics {
     Rectangle(f64,f64),
     Color([f32;4], Box<Graphics>),
@@ -224,6 +221,7 @@ impl Graphics {
     }
 }
 
+#[derive(Clone, Debug)]
 enum Prim<'a> {
     PrimColor([f32;4]),
     PrimTransform(Matrix2d),
@@ -255,8 +253,7 @@ fn main() {
     let mut right_pressed = false;
     let mut left_pressed = false;
     let mut shift = [0.0, 0.0];
-    let mut mouse_pos = [0.0, 0.0];
-    let mut hover = Hover::Nothing;
+    let mut mouse_pos = [-1000000.0, -1000000.0];
 
     while let Some(e) = window.next() {
         let out = window.output_color.clone();
@@ -305,7 +302,7 @@ fn main() {
 
         let tilesize = 100.0 * zoom;
 
-        window.draw_2d(&e, |mut c, mut g| {
+        window.draw_2d(&e, |c, mut g| {
             clear([0.5, 0.5, 0.5, 1.0], g);
 
             let field = {
@@ -364,8 +361,11 @@ fn main() {
                                 stack.push(singleton(gr));
                             }
                             &Text(size,ref txt) => {
-                                text([0.0,0.0,0.0,1.0], size, txt, 
-                                     &mut font, multiply(c.transform,trans), g);
+                                let s = (get_scale(trans)[1]*size as f64).ceil();
+                                let sf = size as f64 / s;
+                                text([0.0,0.0,0.0,1.0], s as u32, txt, &mut font, 
+                                     multiply(c.transform,
+                                              trans.scale(sf, sf)), g);
                             }
                             &Group(ref children) => {
                                 stack.push(PrimDraw(children));
