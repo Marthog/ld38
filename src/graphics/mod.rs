@@ -1,11 +1,11 @@
 #![allow(unused_variables, unused_imports)]
 
 extern crate piston_window;
-extern crate gfx_text;
 
 use self::piston_window::*;
 
 mod font_cache;
+use self::font_cache::FontCache;
 
 const TILE_WIDTH: f32 = 100.0;
 const TILE_HEIGHT: f32 = 100.0;
@@ -21,7 +21,8 @@ pub fn window() {
             .build().unwrap();
 
     let factory = window.factory.clone();
-    let mut text = gfx_text::new(factory).build().unwrap();
+
+    let mut font = FontCache::new(factory, "assets/NotoSans-Regular.ttf");
 
     while let Some(e) = window.next() {
         let out = window.output_color.clone();
@@ -36,15 +37,12 @@ pub fn window() {
                       [50.0, 50.0, 100.0, 100.0], // rectangle
                       c.transform, g);
 
-            // Add some text 10 pixels down and right from the top left screen corner.
-            text.add(
-                "The quick brown fox jumps over the lazy dog",  // Text to add
-                [10, 10],                                       // Position
-                [0.0, 0.0, 0.16, 1.0],                        // Text color
-            );
-
-            // Draw text.
-            text.draw(&mut g.encoder, &out);
+            text([0.0,0.0,0.0,1.0],
+                 32,
+                 "Hello, world!",
+                 &mut font,
+                 c.transform.trans(0.0,32.0),
+                 g);
         });
     }
 }

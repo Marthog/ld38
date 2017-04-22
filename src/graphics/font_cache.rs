@@ -53,21 +53,17 @@ where R: Resources,
             let width = bitmap.width() as u32;
             let height = bitmap.rows() as u32;
 
-            let buffer:Vec<u8> = bitmap.buffer().into_iter()
-                .flat_map(|&c| (vec![c,c,c,255]).into_iter())
-                .collect();
-
             let settings = TextureSettings::new();
                 //.filter(Filter::Nearest);
 
             let tex = Texture::from_memory_alpha(factory, 
-                                                 &buffer,
+                                                 &bitmap.buffer(),
                                                  width,
                                                  height,
                                                  &settings).unwrap();
 
             Glyph {
-                size: [width as f64, height as f64],
+                size: [width as f64, 0.0],//height as f64],
                 bearing: [glyph.bitmap_left() as f64, glyph.bitmap_top() as f64],
                 tex: tex,
             }
