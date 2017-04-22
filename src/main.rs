@@ -12,6 +12,7 @@ use std::collections::{HashMap};
 
 mod graphics;
 use self::graphics::FontCache;
+use self::piston_window::math::*;
 
 #[derive(Clone, PartialEq, PartialOrd, Eq, Ord, Debug)]
 pub enum Card {
@@ -31,12 +32,40 @@ pub enum Tile {
     City(u32),
 }
 
+impl Tile {
+    pub fn color(&self) -> [f32;4] {
+        use self::Tile::*;
+        let s = match self {
+            &Forrest    => [0.2, 0.8, 0.4],
+            &Farmland   => [0.4, 1.0, 0.4],
+            &Mountain   => [0.4, 0.4, 0.4],
+            &Coal       => [0.2, 0.2, 0.2],
+            &Iron       => [0.8, 0.2, 0.2],
+            &City(_)    => [0.8, 0.6, 0.6],
+        };
+        [s[0],s[1],s[2],1.0]
+    }
+
+    pub fn text(&self) -> &'static str {
+        use self::Tile::*;
+        match self {
+            &Forrest    => "Forrest",
+            &Farmland   => "Farmland",
+            &Mountain   => "Mountain",
+            &Coal       => "Coal",
+            &Iron       => "Mountain",
+            &City(_)    => "City",
+        }
+    }
+
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Map {
-    tiles: Vec<Tile>,
-    width: u32,
-    height: u32,
-    cards: HashMap<Coord,Card>,
+    pub tiles: Vec<Tile>,
+    pub width: u32,
+    pub height: u32,
+    pub cards: HashMap<Coord,Card>,
 }
 
 impl Map {
@@ -112,6 +141,16 @@ impl Map {
     }
 }
 
+fn clamp<T: PartialOrd>(min: T, val: T, max: T) -> T {
+    if val<min {
+        min
+    } else if val>max {
+        max
+    } else {
+        val
+    }
+}
+
 fn main() {
     use self::Tile::*;
     use self::Card::*;
@@ -129,26 +168,75 @@ fn main() {
 
     let mut font = FontCache::new(factory, "assets/NotoSans-Regular.ttf");
 
+    let mut zoom = 2.0;
+    let mut right_pressed = false;
+    let mut shift = [0.0, 0.0];
+
     while let Some(e) = window.next() {
         let out = window.output_color.clone();
-        window.draw_2d(&e, |c, mut g| {
+
+        e.mouse_scroll(|_, y| {
+            zoom = clamp(0.24, zoom+y*0.1, 4.0);
+        });
+
+        e.cursor(|b| {
+            right_pressed = false;
+        });
+
+        e.press(|btn| {
+            match btn {
+                Button::Mouse(MouseButton::Right) => {
+                    right_pressed = true;
+                }
+                _   => {}
+            }
+        });
+
+        e.release(|btn| {
+            match btn {
+                Button::Mouse(MouseButton::Right) => right_pressed = false,
+                _   => {}
+            }
+        });
+
+        e.mouse_relative(|x,y| {
+            if right_pressed {
+                shift = math::add(shift, [x,y]);
+            }
+        });
+
+        let tilesize = 100.0 * zoom;
+
+        window.draw_2d(&e, |mut c, mut g| {
             clear([0.5, 0.5, 0.5, 1.0], g);
 
-            text([0.0,0.0,0.0,1.0],
-                 32,
-                 "Hello, world!",
-                 &mut font,
-                 c.transform.trans(50.0,32.0),
-                 g);
+            for y in 0..map.height {
+                for x in 0..map.width {
 
-            rectangle([0.0, 0.0, 1.0, 1.0], // blue
-                      [50.0, 50.0, 100.0, 100.0], // rectangle
+                    let ref tile = map.tiles[(y*map.width+x) as usize];
+
+                    let trans = c.transform
+                        .trans(x as f64*tilesize,y as f64*tilesize)
+                        .trans(shift[0], shift[1]);
+
+                    rectangle(tile.color(),
+                        [0.0, 0.0, tilesize, tilesize],
+                        trans, g);
+
+                    text([0.0,0.0,0.0,1.0],
+                         (12.0*zoom) as u32,
+                         tile.text(),
+                         &mut font,
+                         trans.trans(10.0*zoom,10.0*zoom),
+                         g);
+                }
+            }
+
+
+            let v = c.get_view_size();
+            rectangle([0.3,0.3,0.3,1.0],
+                      [0.0, v[1]-200.0, v[0], 200.0],
                       c.transform, g);
-
-            rectangle([1.0, 0.0, 0.0, 1.0], // red
-                      [0.0, 0.0, 100.0, 100.0], // rectangle
-                      c.transform, g);
-
         });
     }
 
@@ -182,7 +270,7 @@ fn main() {
 fn test_map() -> Map {
     use self::Tile::*;
     Map::new(2,3,
-        vec![Forrest,Forrest,
+        vec![Forrest,Mountain,
                 Farmland,City(1000),
                 Farmland,Coal])
 }
@@ -208,7 +296,7 @@ mod tests {
     fn card_options() {
         let map = test_map();
         assert_eq!(map.card_options(), vec![
-                ((0,0),Lumber), ((1,0),Lumber),
+                ((0,0),Lumber),
                 ((0,1),Farm),
                 ((0,2),Farm),
         ])
