@@ -21,7 +21,6 @@ pub enum Card {
     Farm,
     Lumber,
 }
-
 type Coord = (u32,u32);
 
 #[derive(Clone, Debug)]
@@ -63,9 +62,60 @@ impl Tile {
 }
 
 #[derive(Clone, Debug, Default)]
-struct Rect {
+struct Rect<T> {
     pub size: Vec2d,
     pub transform: Matrix2d,
+    pub children: Vec<Rect<T>>,
+    pub value: T,
+    pub color: [f64; 4],
+}
+
+impl<T:Clone> Rect<T> {
+    pub fn new(size: Vec2d, transform: Matrix2d, value: T) -> Self {
+        Rect{
+            size: size,
+            transform: transform,
+            children: vec![],
+            value: value,
+            color: [0.0,0.0,0.0,1.0],
+        }
+    }
+
+    pub fn inside(&self, p: Vec2d) -> bool {
+        let p = transform_pos(self.transform, p);
+        p[0]>=0.0 && p[1]>=0.0 && p[0]<=self.size[0] && p[1]<=self.size[1]
+    }
+
+    pub fn find(&self, point: Vec2d) -> Option<T> {
+        if !self.inside(point) {
+            return None;
+        }
+        let p = transform_pos(self.transform, point);
+        Some(self.children.iter()
+            .filter_map(|c| c.find(p))
+            .next()
+            .unwrap_or_else(|| self.value.clone()))
+    }
+
+    pub fn add_child(&mut self, mut child: Self) {
+        child.transform = multiply(self.transform, child.transform);
+    }
+
+    pub fn hsplit(self, at: f64) -> (Self, Self) {
+        (Rect{
+            size: [self.size[0], at],
+            transform: self.transform,
+            children: vec![],
+            value: self.value.clone(),
+            color: self.color,
+        }, Rect{
+            size: [self.size[0], self.size[1]-at],
+            transform: self.transform.trans(0.0, at),
+            children: vec![],
+            value: self.value.clone(),
+            color: self.color,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -179,7 +229,7 @@ fn clamp<T: PartialOrd>(min: T, val: T, max: T) -> T {
 
 pub fn inside(rect: [f64;4], p: Vec2d) -> bool {
     let p = sub(p, [rect[0],rect[1]]);
-    p[0]>=0.0 && p[1]>=0.0 && p[0]<=rect[3] && p[1]<=rect[4]
+    p[0]>=0.0 && p[1]>=0.0 && p[0]<=rect[2] && p[1]<=rect[3]
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,6 +238,24 @@ enum Hover {
     Field(u32),
     Nothing,
 }
+
+enum Graphics {
+    Rectangle([f64;2]),
+    Color([f32;4], Box<Graphics>),
+    Translate(Vec2d, Box<Graphics>),
+    Scale(f64, Box<Graphics>),
+    Text(u32, String),
+    Group(Vec<Graphics>),
+}
+
+enum Prim<'a> {
+    PrimColor([f32;4]),
+    PrimTransform(Matrix2d),
+    PrimDraw(&'a [Graphics]),
+    PrimDrawS(&'a Graphics),
+}
+
+use Prim::*;
 
 fn main() {
     use self::Tile::*;
@@ -263,9 +331,58 @@ fn main() {
         window.draw_2d(&e, |mut c, mut g| {
             clear([0.5, 0.5, 0.5, 1.0], g);
 
+            let graphics = Graphics::Rectangle([100.0,100.0]);
+            let mut stack = vec![];
+            let singleton = |gr| PrimDrawS(gr);
+            singleton(&graphics);
+            let mut trans = c.transform;
+            let mut color = [0.0, 0.0, 0.0, 1.0];
+
+            while let Some(e) = stack.pop() {
+                use Graphics::*;
+                match e {
+                    PrimColor(c) => { color = c; }
+                    PrimTransform(t) => { trans = t; }
+                    PrimDrawS(s0) => {
+                        match s0 {
+                            &Rectangle(size) => {
+                                rectangle(color, [0.0, 0.0, size[0], size[1]], trans, g);
+                            }
+                            &Color(col, ref gr) => {
+                                stack.push(PrimColor(col));
+                                color = col;
+                                stack.push(singleton(gr));
+                            }
+                            &Translate(t, ref gr) => {
+                                stack.push(PrimTransform(trans));
+                                trans = trans.trans(t[0],t[1]);
+                                stack.push(singleton(gr));
+                            }
+                            &Scale(t, ref gr) => {
+                                stack.push(PrimTransform(trans));
+                                trans = trans.scale(t,t);
+                                stack.push(singleton(gr));
+                            }
+                            &Text(size,ref txt) => {
+                                text([0.0,0.0,0.0,1.0], size, txt, 
+                                     &mut font, trans, g);
+                            }
+                            &Group(ref children) => {
+                                stack.push(PrimDraw(children));
+                            }
+                        }
+                    }
+                    PrimDraw(gra) => {
+                        if let Some((s0,s1)) = gra.split_first() {
+                            stack.push(PrimDrawS(s0));
+                            stack.push(PrimDraw(s1));
+                        }
+                    }
+                }
+            }
+                
             let old_hover = hover;
             hover = Hover::Nothing;
-
             let model = translate([shift[0], shift[1]]).scale(zoom,zoom);
 
             map.each(|x,y,tile| {
@@ -273,8 +390,7 @@ fn main() {
                     .trans(x as f64*tilesize,y as f64*tilesize);
 
                 let p = transform_pos(trans, [0.0, 0.0]);
-                if mouse_pos[0]>=p[0] && mouse_pos[0]<=p[0]+tilesize &&
-                    mouse_pos[1]>=p[1] && mouse_pos[1]<=p[1]+tilesize {
+                if inside([p[0],p[1],tilesize,tilesize], mouse_pos) {
                     hover = Hover::Tile(x, y);
                 }
 
@@ -292,11 +408,22 @@ fn main() {
                      g);
             });
 
-            let v = c.get_view_size();
-            rectangle([0.3,0.3,0.3,1.0],
-                      [0.0, v[1]-200.0, v[0], 200.0],
-                      c.transform, g);
+            // Bottom bar
+            {
+                let v = c.get_view_size();
+                let mut main_rect = Rect::new(
+                    [v[0], 200.0],
+                    translate([0.0, v[1]-200.0]),
+                    0);
 
+                let bottombar = [0.0, v[1]-200.0, v[0], 200.0];
+                if inside(bottombar, mouse_pos) {
+                    hover = Hover::Nothing;
+                }
+                rectangle([0.3,0.3,0.3,1.0],
+                          bottombar,
+                          c.transform, g);
+            }
 
             if hover !=old_hover {
                left_pressed = false;
