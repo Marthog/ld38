@@ -177,23 +177,9 @@ fn clamp<T: PartialOrd>(min: T, val: T, max: T) -> T {
     }
 }
 
-/// Transform a rectangle under the assumption, that the matrix does not 
-/// scale.
-fn transform_rectangle(mut rec: [f64; 4], shift: Vec2d, zoom: f64) -> [f64;4] {
-    rec[0] += shift[0];
-    rec[1] += shift[1];
-
-    for e in &mut rec {
-        *e *= zoom;
-    }
-    rec
-}
-
-#[test]
-fn test_transform_rectangle() {
-    assert_eq!(transform_rectangle([10.0, 10.0, 10.0, 10.0],
-        [-20.0, 20.0],
-        2.0), [-20.0, 60.0, 20.0, 20.0]);
+pub fn inside(rect: [f64;4], p: Vec2d) -> bool {
+    let p = sub(p, [rect[0],rect[1]]);
+    p[0]>=0.0 && p[1]>=0.0 && p[0]<=rect[3] && p[1]<=rect[4]
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,7 +211,6 @@ fn main() {
     let mut left_pressed = false;
     let mut shift = [0.0, 0.0];
     let mut mouse_pos = [0.0, 0.0];
-    let mut transform = identity();
     let mut hover = Hover::Nothing;
 
     while let Some(e) = window.next() {
@@ -280,19 +265,20 @@ fn main() {
 
             let old_hover = hover;
             hover = Hover::Nothing;
-            transform = c.transform
-                            .trans(shift[0], shift[1])
-                            .scale(zoom,zoom);
+
+            let model = translate([shift[0], shift[1]]).scale(zoom,zoom);
 
             map.each(|x,y,tile| {
-                let trans = transform
+                let trans = model
                     .trans(x as f64*tilesize,y as f64*tilesize);
 
-                let p = transform_pos(multiply(trans, c.view), [0.0, 0.0]);
+                let p = transform_pos(trans, [0.0, 0.0]);
                 if mouse_pos[0]>=p[0] && mouse_pos[0]<=p[0]+tilesize &&
-                    mouse_pos[0]>=p[0] && mouse_pos[0]<=p[0]+tilesize {
+                    mouse_pos[1]>=p[1] && mouse_pos[1]<=p[1]+tilesize {
                     hover = Hover::Tile(x, y);
                 }
+
+                let trans = multiply(c.transform, trans);
 
                 rectangle(tile.color(),
                     [0.0, 0.0, tilesize, tilesize],
@@ -310,6 +296,7 @@ fn main() {
             rectangle([0.3,0.3,0.3,1.0],
                       [0.0, v[1]-200.0, v[0], 200.0],
                       c.transform, g);
+
 
             if hover !=old_hover {
                left_pressed = false;
