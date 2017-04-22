@@ -13,7 +13,6 @@ lazy_static = "0.2"
 assert = "0.7"
 csv = "0.15"
 piston_window = "*"
-gfx_text = "*"
 freetype-rs = "*"
 gfx_core = "*"
 
