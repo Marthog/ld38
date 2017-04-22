@@ -62,63 +62,6 @@ impl Tile {
 }
 
 #[derive(Clone, Debug, Default)]
-struct Rect<T> {
-    pub size: Vec2d,
-    pub transform: Matrix2d,
-    pub children: Vec<Rect<T>>,
-    pub value: T,
-    pub color: [f64; 4],
-}
-
-impl<T:Clone> Rect<T> {
-    pub fn new(size: Vec2d, transform: Matrix2d, value: T) -> Self {
-        Rect{
-            size: size,
-            transform: transform,
-            children: vec![],
-            value: value,
-            color: [0.0,0.0,0.0,1.0],
-        }
-    }
-
-    pub fn inside(&self, p: Vec2d) -> bool {
-        let p = transform_pos(self.transform, p);
-        p[0]>=0.0 && p[1]>=0.0 && p[0]<=self.size[0] && p[1]<=self.size[1]
-    }
-
-    pub fn find(&self, point: Vec2d) -> Option<T> {
-        if !self.inside(point) {
-            return None;
-        }
-        let p = transform_pos(self.transform, point);
-        Some(self.children.iter()
-            .filter_map(|c| c.find(p))
-            .next()
-            .unwrap_or_else(|| self.value.clone()))
-    }
-
-    pub fn add_child(&mut self, mut child: Self) {
-        child.transform = multiply(self.transform, child.transform);
-    }
-
-    pub fn hsplit(self, at: f64) -> (Self, Self) {
-        (Rect{
-            size: [self.size[0], at],
-            transform: self.transform,
-            children: vec![],
-            value: self.value.clone(),
-            color: self.color,
-        }, Rect{
-            size: [self.size[0], self.size[1]-at],
-            transform: self.transform.trans(0.0, at),
-            children: vec![],
-            value: self.value.clone(),
-            color: self.color,
-        })
-    }
-}
-
-#[derive(Clone, Debug, Default)]
 pub struct Map {
     pub tiles: Vec<Tile>,
     pub width: u32,
@@ -163,6 +106,18 @@ impl Map {
             .sum();
         let admin = self.pops() / 10;
         workers+admin
+    }
+
+    pub fn build_graphics(&self) -> Graphics {
+        use Graphics::*;
+        let mut group = Vec::new();
+        self.each(|x,y,tile| {
+            let tile_size = 100.0;
+            let r = Box::new(Rectangle(tile_size,tile_size));
+
+            group.push(Translate([x as f64*tile_size,y as f64*tile_size],r));
+        });
+        Group(group)
     }
 
     pub fn each<F>(&self, mut f: F) -> ()
@@ -239,8 +194,8 @@ enum Hover {
     Nothing,
 }
 
-enum Graphics {
-    Rectangle([f64;2]),
+pub enum Graphics {
+    Rectangle(f64,f64),
     Color([f32;4], Box<Graphics>),
     Translate(Vec2d, Box<Graphics>),
     Scale(f64, Box<Graphics>),
@@ -331,7 +286,7 @@ fn main() {
         window.draw_2d(&e, |mut c, mut g| {
             clear([0.5, 0.5, 0.5, 1.0], g);
 
-            let graphics = Graphics::Rectangle([100.0,100.0]);
+            let graphics = Graphics::Rectangle(100.0,100.0);
             let mut stack = vec![];
             let singleton = |gr| PrimDrawS(gr);
             singleton(&graphics);
@@ -345,8 +300,8 @@ fn main() {
                     PrimTransform(t) => { trans = t; }
                     PrimDrawS(s0) => {
                         match s0 {
-                            &Rectangle(size) => {
-                                rectangle(color, [0.0, 0.0, size[0], size[1]], trans, g);
+                            &Rectangle(w,h) => {
+                                rectangle(color, [0.0, 0.0, w, h], trans, g);
                             }
                             &Color(col, ref gr) => {
                                 stack.push(PrimColor(col));
@@ -411,10 +366,6 @@ fn main() {
             // Bottom bar
             {
                 let v = c.get_view_size();
-                let mut main_rect = Rect::new(
-                    [v[0], 200.0],
-                    translate([0.0, v[1]-200.0]),
-                    0);
 
                 let bottombar = [0.0, v[1]-200.0, v[0], 200.0];
                 if inside(bottombar, mouse_pos) {
