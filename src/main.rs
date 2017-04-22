@@ -113,7 +113,12 @@ impl Map {
         let mut group = Vec::new();
         self.each(|x,y,tile| {
             let tile_size = 100.0;
-            let r = Box::new(Rectangle(tile_size,tile_size));
+            let bg = Click(y*self.width+x, Box::new(Color(tile.color(), 
+                                   Box::new(Rectangle(tile_size,tile_size)))));
+
+            let txt = Translate([10.0, 10.0], Box::new(Text(12, tile.text().to_string())));
+
+            let r = Box::new(Group(vec![bg,txt]));
 
             group.push(Translate([x as f64*tile_size,y as f64*tile_size],r));
         });
@@ -151,7 +156,7 @@ impl Map {
             let coord = (x,y);
             let mut add = |t| { places.push((coord,t)); };
 
-            match self.tiles[(y*w+x) as usize] {
+            match *tile {
                 Forrest => { if !self.cards.contains_key(&coord) { add(Lumber) } }
                 Farmland => { if !self.cards.contains_key(&coord) { add(Farm) } }
                 Coal | Iron | Mountain | City(_) => {}
@@ -201,6 +206,22 @@ pub enum Graphics {
     Scale(f64, Box<Graphics>),
     Text(u32, String),
     Group(Vec<Graphics>),
+    Click(u32, Box<Graphics>),
+}
+
+impl Graphics {
+    pub fn color(self, col: [f32;4]) -> Graphics {
+        Graphics::Color(col, Box::new(self))
+    }
+    pub fn translate(self, v: Vec2d) -> Graphics {
+        Graphics::Translate(v, Box::new(self))
+    }
+    pub fn scale(self, s: f64) -> Graphics {
+        Graphics::Scale(s, Box::new(self))
+    }
+    pub fn click(self, id: u32) -> Graphics {
+        Graphics::Click(id, Box::new(self))
+    }
 }
 
 enum Prim<'a> {
@@ -208,6 +229,7 @@ enum Prim<'a> {
     PrimTransform(Matrix2d),
     PrimDraw(&'a [Graphics]),
     PrimDrawS(&'a Graphics),
+    PrimClick(u32),
 }
 
 use Prim::*;
@@ -286,22 +308,45 @@ fn main() {
         window.draw_2d(&e, |mut c, mut g| {
             clear([0.5, 0.5, 0.5, 1.0], g);
 
-            let graphics = Graphics::Rectangle(100.0,100.0);
-            let mut stack = vec![];
+            let field = {
+                map.build_graphics()
+                    .translate(shift)
+                    .scale(zoom)
+            };
+
+            let ui = {
+                let v = c.get_view_size();
+
+                Graphics::Rectangle(v[0],200.0)
+                    .translate([0.0, v[1]-200.0])
+                    .color([0.3,0.3,0.3,1.0])
+            };
+
+            let graphics = Graphics::Group(vec![field, ui]);
+
+            let mut stack = vec![PrimDrawS(&graphics)];
             let singleton = |gr| PrimDrawS(gr);
-            singleton(&graphics);
-            let mut trans = c.transform;
+            let mut trans = identity();
             let mut color = [0.0, 0.0, 0.0, 1.0];
+            let mut hovered = false;
 
             while let Some(e) = stack.pop() {
                 use Graphics::*;
                 match e {
-                    PrimColor(c) => { color = c; }
-                    PrimTransform(t) => { trans = t; }
-                    PrimDrawS(s0) => {
+                    PrimColor(c)        => { color = c; }
+                    PrimTransform(t)    => { trans = t; }
+                    PrimClick(c)    => { if hovered { println!("{}", c); } }
+                    PrimDrawS(s0)   => {
                         match s0 {
                             &Rectangle(w,h) => {
-                                rectangle(color, [0.0, 0.0, w, h], trans, g);
+                                rectangle(color, [0.0, 0.0, w, h], 
+                                          multiply(c.transform,trans), g);
+
+                                let ti = vecmath::mat2x3_inv(trans);
+                                let p = transform_pos(ti, mouse_pos);
+                                if inside([0.0,0.0,w,h], p) {
+                                    hovered = true;
+                                }
                             }
                             &Color(col, ref gr) => {
                                 stack.push(PrimColor(col));
@@ -320,65 +365,25 @@ fn main() {
                             }
                             &Text(size,ref txt) => {
                                 text([0.0,0.0,0.0,1.0], size, txt, 
-                                     &mut font, trans, g);
+                                     &mut font, multiply(c.transform,trans), g);
                             }
                             &Group(ref children) => {
                                 stack.push(PrimDraw(children));
+                            }
+                            &Click(id, ref gr) => {
+                                stack.push(PrimClick(id));
+                                stack.push(singleton(gr));
+                                hovered = false;
                             }
                         }
                     }
                     PrimDraw(gra) => {
                         if let Some((s0,s1)) = gra.split_first() {
-                            stack.push(PrimDrawS(s0));
                             stack.push(PrimDraw(s1));
+                            stack.push(PrimDrawS(s0));
                         }
                     }
                 }
-            }
-                
-            let old_hover = hover;
-            hover = Hover::Nothing;
-            let model = translate([shift[0], shift[1]]).scale(zoom,zoom);
-
-            map.each(|x,y,tile| {
-                let trans = model
-                    .trans(x as f64*tilesize,y as f64*tilesize);
-
-                let p = transform_pos(trans, [0.0, 0.0]);
-                if inside([p[0],p[1],tilesize,tilesize], mouse_pos) {
-                    hover = Hover::Tile(x, y);
-                }
-
-                let trans = multiply(c.transform, trans);
-
-                rectangle(tile.color(),
-                    [0.0, 0.0, tilesize, tilesize],
-                    trans, g);
-
-                text([0.0,0.0,0.0,1.0],
-                     (12.0*zoom) as u32,
-                     tile.text(),
-                     &mut font,
-                     trans.trans(10.0*zoom,10.0*zoom),
-                     g);
-            });
-
-            // Bottom bar
-            {
-                let v = c.get_view_size();
-
-                let bottombar = [0.0, v[1]-200.0, v[0], 200.0];
-                if inside(bottombar, mouse_pos) {
-                    hover = Hover::Nothing;
-                }
-                rectangle([0.3,0.3,0.3,1.0],
-                          bottombar,
-                          c.transform, g);
-            }
-
-            if hover !=old_hover {
-               left_pressed = false;
-               println!("hover {:?}", hover);
             }
         });
     }
