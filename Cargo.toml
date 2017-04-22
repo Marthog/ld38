@@ -15,6 +15,7 @@ csv = "0.15"
 piston_window = "*"
 freetype-rs = "*"
 gfx_core = "*"
+vecmath = "*"
 
 [dev-dependencies]
 quickcheck = "0.4"

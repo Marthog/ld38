@@ -5,6 +5,8 @@
 extern crate quickcheck;
 
 extern crate piston_window;
+extern crate vecmath;
+extern crate assert;
 
 use self::piston_window::*;
 
@@ -61,6 +63,12 @@ impl Tile {
 }
 
 #[derive(Clone, Debug, Default)]
+struct Rect {
+    pub size: Vec2d,
+    pub transform: Matrix2d,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct Map {
     pub tiles: Vec<Tile>,
     pub width: u32,
@@ -107,6 +115,26 @@ impl Map {
         workers+admin
     }
 
+    pub fn each<F>(&self, mut f: F) -> ()
+    where F: FnMut(u32, u32, &Tile) -> ()
+    {
+        for y in 0..self.height {
+            for x in 0..self.width {
+                f(x, y, &self.tiles[(y*self.width + x) as usize]);
+            }
+        }
+    }
+
+    pub fn each_mut<F>(&mut self, mut f: F) -> ()
+    where F: FnMut(u32, u32, &mut Tile) -> ()
+    {
+        for y in 0..self.height {
+            for x in 0..self.width {
+                f(x, y, &mut self.tiles[(y*self.width + x) as usize]);
+            }
+        }
+    }
+
     /// Get all the places, where you can put a card.
     pub fn card_options(&self) -> Vec<(Coord,Card)> {
         let mut places = Vec::new();
@@ -114,18 +142,16 @@ impl Map {
         use self::Card::*;
         let w = self.width;
 
-        for y in 0..self.height {
-            for x in 0..self.width {
-                let coord = (x,y);
-                let mut add = |t| { places.push((coord,t)); };
+        self.each(|x,y,tile| {
+            let coord = (x,y);
+            let mut add = |t| { places.push((coord,t)); };
 
-                match self.tiles[(y*w+x) as usize] {
-                    Forrest => { if !self.cards.contains_key(&coord) { add(Lumber) } }
-                    Farmland => { if !self.cards.contains_key(&coord) { add(Farm) } }
-                    Coal | Iron | Mountain | City(_) => {}
-                }
+            match self.tiles[(y*w+x) as usize] {
+                Forrest => { if !self.cards.contains_key(&coord) { add(Lumber) } }
+                Farmland => { if !self.cards.contains_key(&coord) { add(Farm) } }
+                Coal | Iron | Mountain | City(_) => {}
             }
-        }
+        });
 
         places
     }
@@ -151,6 +177,32 @@ fn clamp<T: PartialOrd>(min: T, val: T, max: T) -> T {
     }
 }
 
+/// Transform a rectangle under the assumption, that the matrix does not 
+/// scale.
+fn transform_rectangle(mut rec: [f64; 4], shift: Vec2d, zoom: f64) -> [f64;4] {
+    rec[0] += shift[0];
+    rec[1] += shift[1];
+
+    for e in &mut rec {
+        *e *= zoom;
+    }
+    rec
+}
+
+#[test]
+fn test_transform_rectangle() {
+    assert_eq!(transform_rectangle([10.0, 10.0, 10.0, 10.0],
+        [-20.0, 20.0],
+        2.0), [-20.0, 60.0, 20.0, 20.0]);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Hover {
+    Tile(u32,u32),
+    Field(u32),
+    Nothing,
+}
+
 fn main() {
     use self::Tile::*;
     use self::Card::*;
@@ -168,9 +220,13 @@ fn main() {
 
     let mut font = FontCache::new(factory, "assets/NotoSans-Regular.ttf");
 
-    let mut zoom = 2.0;
+    let mut zoom = 1.0;
     let mut right_pressed = false;
+    let mut left_pressed = false;
     let mut shift = [0.0, 0.0];
+    let mut mouse_pos = [0.0, 0.0];
+    let mut transform = identity();
+    let mut hover = Hover::Nothing;
 
     while let Some(e) = window.next() {
         let out = window.output_color.clone();
@@ -181,6 +237,7 @@ fn main() {
 
         e.cursor(|b| {
             right_pressed = false;
+            left_pressed = false;
         });
 
         e.press(|btn| {
@@ -188,6 +245,7 @@ fn main() {
                 Button::Mouse(MouseButton::Right) => {
                     right_pressed = true;
                 }
+                Button::Mouse(MouseButton::Left) => left_pressed = true,
                 _   => {}
             }
         });
@@ -195,9 +253,15 @@ fn main() {
         e.release(|btn| {
             match btn {
                 Button::Mouse(MouseButton::Right) => right_pressed = false,
+                Button::Mouse(MouseButton::Left) => {
+                    left_pressed = false;
+                }
                 _   => {}
             }
         });
+
+        let tile_size = 100.0;
+
 
         e.mouse_relative(|x,y| {
             if right_pressed {
@@ -205,38 +269,52 @@ fn main() {
             }
         });
 
+        e.mouse_cursor(|x,y| {
+            mouse_pos = [x, y];
+        });
+
         let tilesize = 100.0 * zoom;
 
         window.draw_2d(&e, |mut c, mut g| {
             clear([0.5, 0.5, 0.5, 1.0], g);
 
-            for y in 0..map.height {
-                for x in 0..map.width {
+            let old_hover = hover;
+            hover = Hover::Nothing;
+            transform = c.transform
+                            .trans(shift[0], shift[1])
+                            .scale(zoom,zoom);
 
-                    let ref tile = map.tiles[(y*map.width+x) as usize];
+            map.each(|x,y,tile| {
+                let trans = transform
+                    .trans(x as f64*tilesize,y as f64*tilesize);
 
-                    let trans = c.transform
-                        .trans(x as f64*tilesize,y as f64*tilesize)
-                        .trans(shift[0], shift[1]);
-
-                    rectangle(tile.color(),
-                        [0.0, 0.0, tilesize, tilesize],
-                        trans, g);
-
-                    text([0.0,0.0,0.0,1.0],
-                         (12.0*zoom) as u32,
-                         tile.text(),
-                         &mut font,
-                         trans.trans(10.0*zoom,10.0*zoom),
-                         g);
+                let p = transform_pos(multiply(trans, c.view), [0.0, 0.0]);
+                if mouse_pos[0]>=p[0] && mouse_pos[0]<=p[0]+tilesize &&
+                    mouse_pos[0]>=p[0] && mouse_pos[0]<=p[0]+tilesize {
+                    hover = Hover::Tile(x, y);
                 }
-            }
 
+                rectangle(tile.color(),
+                    [0.0, 0.0, tilesize, tilesize],
+                    trans, g);
+
+                text([0.0,0.0,0.0,1.0],
+                     (12.0*zoom) as u32,
+                     tile.text(),
+                     &mut font,
+                     trans.trans(10.0*zoom,10.0*zoom),
+                     g);
+            });
 
             let v = c.get_view_size();
             rectangle([0.3,0.3,0.3,1.0],
                       [0.0, v[1]-200.0, v[0], 200.0],
                       c.transform, g);
+
+            if hover !=old_hover {
+               left_pressed = false;
+               println!("hover {:?}", hover);
+            }
         });
     }
 
@@ -307,6 +385,14 @@ mod tests {
         let mut map = test_map();
         map.place_card((0,0),Lumber);
     }
+
+    #[test]
+    fn test_clamp() {
+        assert_eq!(clamp(0.0, 10.0, 100.0), 10.0);
+        assert_eq!(clamp(0.0, 100.0, 10.0), 10.0);
+        assert_eq!(clamp(10.0, 0.0, 100.0), 10.0);
+    }
+
 
     #[test]
     #[should_panic]
