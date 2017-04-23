@@ -2,11 +2,38 @@
 use std::collections::{HashMap};
 use super::Graphics;
 use ::Graphics::*;
+use rand::{self, Rand, Rng};
+use rand::distributions::{Range, Sample};
+use std::mem;
 
+#[derive(Clone,Debug, PartialEq, Eq)]
+pub enum State {
+    Def,
+    PlaceCard(Card, u32),
+}
+
+#[derive(Clone,Debug, PartialEq, Eq)]
+pub enum Action {
+    Field((u32,u32)),
+    Deck(Card, u32),
+}
+
+const CARD_WIDTH: f64 = 40.0;
+
+#[repr(C)]
+#[repr(u8)]
 #[derive(Clone, PartialEq, PartialOrd, Eq, Ord, Debug)]
 pub enum Card {
     Farm,
     Lumber,
+}
+
+impl Rand for Card {
+    fn rand<R: Rng>(rng: &mut R) -> Self {
+        let i: u8 = rand::distributions::Range::new(0,2)
+            .sample(rng);
+        unsafe { mem::transmute(i) }
+    }
 }
 
 impl Card {
@@ -28,7 +55,7 @@ impl Card {
     }
 
     pub fn draw(&self) -> Graphics {
-        let bg = Rectangle(40.0, 60.0)
+        let bg = Rectangle(CARD_WIDTH, 60.0)
             .color(self.color());
 
         let txt = Text(6, self.title().to_string())
@@ -75,7 +102,6 @@ impl Tile {
             &City(_)    => "City",
         }
     }
-
 }
 
 #[derive(Clone, Debug, Default)]
@@ -95,6 +121,10 @@ impl Map {
             tiles: tiles,
             cards: HashMap::new(),
         }
+    }
+
+    pub fn matches(&self, coord: (u32,u32), card: &Card) -> bool {
+        self.card_options().iter().any(|&(p,ref c)| coord==p && card==c)
     }
 
     /// Total population.
@@ -125,13 +155,18 @@ impl Map {
         workers+admin
     }
 
-    pub fn build_graphics(&self) -> Graphics {
+    pub fn build_graphics(&self, state: &State) -> Graphics {
         let mut group = Vec::new();
         self.each(|x,y,tile| {
             let tile_size = 100.0;
-            let bg = Rectangle(tile_size,tile_size)
-                .color(tile.color())
-                .click(y*self.width+x);
+            let mut bg = Rectangle(tile_size,tile_size)
+                .color(tile.color());
+
+            if let &State::PlaceCard(ref card,i) = state {
+                if (self.matches((x,y), card)) {
+                    bg = bg.click(Action::Field((x,y)));
+                }
+            }
 
             let txt = Text(12, tile.text().to_string())
                 .translate([10.0, 10.0]);
@@ -140,12 +175,13 @@ impl Map {
             if let Some(card) = self.cards.get(&(x,y)) {
                 let c = card.draw()
                     .translate([20.0, 15.0]);
+                    // .click(Action::Field((x,y)));
+
                 gr.push(c);
             }
 
             let r = Group(gr)
                 .translate([x as f64*tile_size,y as f64*tile_size]);
-
             group.push(r);
         });
         Group(group)
@@ -226,6 +262,48 @@ pub fn test_map() -> Map {
 }
 
 
+pub struct Deck {
+    cards: Vec<Card>,
+}
+
+impl Deck {
+    pub fn new() -> Deck {
+        let mut d = Deck{cards: Vec::new()};
+        d.fill();
+        d
+    }
+
+    pub fn draw(&self, width: f64, state: &State) -> Graphics {
+        let margin = 10.0;
+        let dist = clamp(0.0, CARD_WIDTH+2.0*margin, 
+                         (width-2.0*margin)/self.cards.len() as f64);
+        let mut x = margin;
+        let mut v = Vec::new();
+        for i in 0..self.cards.len() {
+            let c = &self.cards[i];
+            let mut l = c.draw()
+                .scale(1.2)
+                .translate([x+margin, margin]);
+            if let &State::Def = state {
+                l = l.click(Action::Deck(c.clone(), i as u32));
+            }
+            x += dist;
+            v.push(l);
+        }
+        Group(v)
+    }
+
+    pub fn fill(&mut self) {
+        for i in 0..5 {
+            self.cards.push(rand::random::<Card>());
+        }
+    }
+
+    pub fn remove_card(&mut self, index: u32) {
+        self.cards[index as usize] = rand::random::<Card>();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,7 +324,6 @@ mod tests {
     fn card_options() {
         let map = test_map();
         assert_eq!(map.card_options(), vec![
-                ((0,0),Lumber),
                 ((0,1),Farm),
                 ((0,2),Farm),
         ])
@@ -255,7 +332,7 @@ mod tests {
     #[test]
     fn card_placement() {
         let mut map = test_map();
-        map.place_card((0,0),Lumber);
+        map.place_card((0,1),Farm);
     }
 
     #[test]
@@ -270,7 +347,6 @@ mod tests {
     #[should_panic]
     fn card_placement_fail() {
         let mut map = test_map();
-        map.place_card((0,0),Lumber);
         map.place_card((0,0),Lumber);
     }
 }

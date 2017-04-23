@@ -7,6 +7,7 @@ use ::piston_window::*;
 use ::piston_window::character::*;
 use self::gfx_core::Resources;
 use self::gfx_core::factory::Factory;
+use ::piston_window::texture::Filter;
 
 use std::fmt::Display;
 
@@ -54,13 +55,13 @@ where R: Resources,
                 let width = bitmap.width() as u32;
                 let height = bitmap.rows() as u32;
 
-                let settings = TextureSettings::new();
-                    //.filter(Filter::Nearest);
+                let settings = TextureSettings::new()
+                    // .filter(Filter::Nearest)
+                    .generate_mipmap(false);
 
                 let tex = Texture::from_memory_alpha(factory, 
                                                      &bitmap.buffer(),
-                                                     width,
-                                                     height,
+                                                     width, height,
                                                      &settings).unwrap();
 
                 Glyph {

@@ -7,6 +7,7 @@ extern crate quickcheck;
 extern crate piston_window;
 extern crate vecmath;
 extern crate assert;
+extern crate rand;
 
 use self::piston_window::*;
 
@@ -33,7 +34,7 @@ pub enum Graphics {
     Scale(f64, Box<Graphics>),
     Text(u32, String),
     Group(Vec<Graphics>),
-    Click(u32, Box<Graphics>),
+    Click(Action, Box<Graphics>),
 }
 
 impl Graphics {
@@ -46,8 +47,8 @@ impl Graphics {
     pub fn scale(self, s: f64) -> Graphics {
         Graphics::Scale(s, Box::new(self))
     }
-    pub fn click(self, id: u32) -> Graphics {
-        Graphics::Click(id, Box::new(self))
+    pub fn click(self, ac: Action) -> Graphics {
+        Graphics::Click(ac, Box::new(self))
     }
 }
 
@@ -84,7 +85,7 @@ enum Prim<'a> {
     PrimTransform(Matrix2d),
     PrimDraw(&'a [Graphics]),
     PrimDrawS(&'a Graphics),
-    PrimClick(u32),
+    PrimClick(Action),
 }
 
 use Prim::*;
@@ -92,7 +93,7 @@ use Prim::*;
 fn main() {
     use self::Tile::*;
     use self::Card::*;
-    let map = test_map();
+    let mut map = test_map();
     let cards = vec![((0,1), Card::Farm)];
 
     let mut window: PistonWindow =
@@ -106,28 +107,32 @@ fn main() {
 
     let mut font = FontCache::new(factory, "assets/NotoSans-Regular.ttf");
 
-    let mut zoom = 1.0;
-    let mut right_pressed = false;
+    let mut zoom = 1.6;
+    let mut middle_pressed = false;
     let mut left_pressed = false;
     let mut shift = [0.0, 0.0];
     let mut mouse_pos = [-1000000.0, -1000000.0];
+
+    let mut hover_action = None;
+    let mut deck = Deck::new();
+    let mut state = State::Def;
 
     while let Some(e) = window.next() {
         let out = window.output_color.clone();
 
         e.mouse_scroll(|_, y| {
-            zoom = clamp(0.24, zoom+y*0.1, 4.0);
+            zoom = clamp(0.6, zoom+y*0.2, 5.0);
         });
 
         e.cursor(|b| {
-            right_pressed = false;
+            middle_pressed = false;
             left_pressed = false;
         });
 
         e.press(|btn| {
             match btn {
-                Button::Mouse(MouseButton::Right) => {
-                    right_pressed = true;
+                Button::Mouse(MouseButton::Middle) => {
+                    middle_pressed = true;
                 }
                 Button::Mouse(MouseButton::Left) => left_pressed = true,
                 _   => {}
@@ -136,9 +141,23 @@ fn main() {
 
         e.release(|btn| {
             match btn {
-                Button::Mouse(MouseButton::Right) => right_pressed = false,
+                Button::Mouse(MouseButton::Right) => { state = State::Def; }
+                Button::Mouse(MouseButton::Middle) => { middle_pressed = false; }
                 Button::Mouse(MouseButton::Left) => {
                     left_pressed = false;
+                    if let Some(h) = hover_action.take() {
+                        println!("{:?}", h);
+                        match h {
+                            Action::Deck(c, i) => { state = State::PlaceCard(c,i); }
+                            Action::Field(p) => { 
+                                if let State::PlaceCard(c,i) = state.clone() {
+                                    state = State::Def; 
+                                    map.place_card(p, c.clone());
+                                    deck.remove_card(i);
+                                }
+                            }
+                        }
+                    }
                 }
                 _   => {}
             }
@@ -146,9 +165,8 @@ fn main() {
 
         let tile_size = 100.0;
 
-
         e.mouse_relative(|x,y| {
-            if right_pressed {
+            if middle_pressed {
                 shift = math::add(shift, [x,y]);
             }
         });
@@ -157,13 +175,14 @@ fn main() {
             mouse_pos = [x, y];
         });
 
-        let tilesize = 100.0 * zoom;
-
         window.draw_2d(&e, |c, mut g| {
+            let last_hover_action = hover_action.take();
+
             clear([0.5, 0.5, 0.5, 1.0], g);
 
+
             let field = {
-                map.build_graphics()
+                map.build_graphics(&state)
                     .translate(shift)
                     .scale(zoom)
             };
@@ -171,12 +190,18 @@ fn main() {
             let ui = {
                 let v = c.get_view_size();
 
-                Graphics::Rectangle(v[0],200.0)
+                let r = Graphics::Rectangle(v[0],200.0)
+                    .color([0.3,0.3,0.3,1.0]);
+                let cards = deck.draw(v[0], &state).scale(2.0);
+                Graphics::Group(vec![r, cards])
                     .translate([0.0, v[1]-200.0])
-                    .color([0.3,0.3,0.3,1.0])
             };
 
-            let graphics = Graphics::Group(vec![field, ui]);
+            let mut graphics = vec![field, ui];
+            if let &State::PlaceCard(ref c,i) = &state {
+                graphics.push(c.draw().translate(mouse_pos));
+            } 
+            let graphics = Graphics::Group(graphics);
 
             let mut stack = vec![PrimDrawS(&graphics)];
             let singleton = |gr| PrimDrawS(gr);
@@ -189,7 +214,11 @@ fn main() {
                 match e {
                     PrimColor(c)        => { color = c; }
                     PrimTransform(t)    => { trans = t; }
-                    PrimClick(c)    => { if hovered { println!("{}", c); } }
+                    PrimClick(c)    => {
+                        if hovered { 
+                            hover_action = Some(c);
+                        }
+                    }
                     PrimDrawS(s0)   => {
                         match s0 {
                             &Rectangle(w,h) => {
@@ -227,8 +256,8 @@ fn main() {
                             &Group(ref children) => {
                                 stack.push(PrimDraw(children));
                             }
-                            &Click(id, ref gr) => {
-                                stack.push(PrimClick(id));
+                            &Click(ref ac, ref gr) => {
+                                stack.push(PrimClick(ac.clone()));
                                 stack.push(singleton(gr));
                                 hovered = false;
                             }
@@ -241,6 +270,10 @@ fn main() {
                         }
                     }
                 }
+            }
+
+            if hover_action != last_hover_action {
+                left_pressed = false;
             }
         });
     }
